@@ -1,0 +1,71 @@
+name: Create Issues from Requirements
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'docs/REQUIREMENTS.md'
+
+jobs:
+  create_issues:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up GitHub CLI
+        uses: cli/cli-action@v3
+
+      - name: Authenticate GitHub CLI
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh auth login --with-token
+
+      - name: Detect or Create Project
+        id: project
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Attempt to detect the first project associated with this repository
+          PROJECT_ID=$(gh project list --repo $GITHUB_REPOSITORY --json id,name --jq '.[0].id')
+          
+          if [ -z "$PROJECT_ID" ]; then
+            # If no project is found, create a new one using the repository name
+            echo "No project found. Creating a new project using the repository name."
+            REPO_NAME=$(basename "$GITHUB_REPOSITORY")
+            PROJECT_ID=$(gh project create "$REPO_NAME" --repo $GITHUB_REPOSITORY --format json --json id --jq '.id')
+            echo "Created new project with ID: $PROJECT_ID"
+          else
+            echo "Detected existing project with ID: $PROJECT_ID"
+          fi
+          
+          # Output the project ID
+          echo "project_id=$PROJECT_ID" >> $GITHUB_ENV
+
+      - name: Extract Requirements and Create Issues
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Read the requirements file
+          REQUIREMENTS=$(cat docs/REQUIREMENTS.md)
+
+          # Parse the document into individual tasks or sections
+          echo "$REQUIREMENTS" | while IFS= read -r line; do
+            # Identify lines that represent task sections (e.g., starting with "- " or "#" for sections)
+            if [[ $line == \#* ]]; then
+              # Treat headers as task categories or project sections
+              SECTION=$line
+            elif [[ $line == -* ]]; then
+              # Create issues from lines starting with "- "
+              gh issue create --title "$line" --body "Section: $SECTION"
+            fi
+          done
+
+      - name: Add Issues to Detected or Created Project
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Add all created issues to the detected or newly created project
+          gh issue list --json number -q '.[].number' | while read -r ISSUE_NUMBER; do
+            gh project item add ${{ env.project_id }} --content-id $(gh issue view $ISSUE_NUMBER --json id -q .id)
+          done
