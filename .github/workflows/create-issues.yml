@@ -1,10 +1,10 @@
 name: Create Issues from Requirements
 
 on:
-  workflow_dispatch:
+  workflow_dispatch: # Allows manual triggering
   push:
     paths:
-      - 'docs/REQUIREMENTS.md'
+      - 'docs/REQUIREMENTS.md' # Trigger on changes to this file
 
 jobs:
   create_issues:
@@ -14,17 +14,17 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Set up GitHub CLI
-        uses: cli/cli-action@v3
+        uses: github/cli-action@v3
 
       - name: Authenticate GitHub CLI
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT_FOR_ACTIONS }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh auth login --with-token
 
       - name: Detect or Create Project
         id: project
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT_FOR_ACTIONS }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Attempt to detect the first project associated with this repository
           PROJECT_ID=$(gh project list --repo $GITHUB_REPOSITORY --json id,name --jq '.[0].id')
@@ -44,7 +44,7 @@ jobs:
 
       - name: Extract Requirements and Create Issues
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT_FOR_ACTIONS }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Read the requirements file
           REQUIREMENTS=$(cat docs/REQUIREMENTS.md)
@@ -63,7 +63,7 @@ jobs:
 
       - name: Add Issues to Detected or Created Project
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT_FOR_ACTIONS }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Add all created issues to the detected or newly created project
           gh issue list --json number -q '.[].number' | while read -r ISSUE_NUMBER; do
