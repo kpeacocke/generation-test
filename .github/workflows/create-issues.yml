@@ -16,7 +16,11 @@ jobs:
       - name: Authenticate GitHub CLI
         env:
           GITHUB_TOKEN: ${{ secrets.PAT_FOR_ACTIONS }} # Use the PAT_FOR_ACTIONS secret
-        run: echo "${GITHUB_TOKEN}" | gh auth login --with-token
+        run: |
+          # Unset GITHUB_TOKEN to prevent conflicts
+          unset GITHUB_TOKEN
+          # Authenticate with GitHub CLI using the PAT_FOR_ACTIONS secret
+          echo "${{ secrets.PAT_FOR_ACTIONS }}" | gh auth login --with-token
 
       - name: Detect or Create Project
         id: project
