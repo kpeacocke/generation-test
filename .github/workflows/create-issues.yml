@@ -15,13 +15,13 @@ jobs:
 
       - name: Authenticate GitHub CLI
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PAT_FOR_ACTIONS }} # Use the PAT_FOR_ACTIONS secret
         run: echo "${GITHUB_TOKEN}" | gh auth login --with-token
 
       - name: Detect or Create Project
         id: project
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PAT_FOR_ACTIONS }} # Use the PAT_FOR_ACTIONS secret
         run: |
           # Attempt to detect the first project associated with this repository
           PROJECT_ID=$(gh project list --repo $GITHUB_REPOSITORY --json id,name --jq '.[0].id')
@@ -41,7 +41,7 @@ jobs:
 
       - name: Extract Requirements and Create Issues
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PAT_FOR_ACTIONS }} # Use the PAT_FOR_ACTIONS secret
         run: |
           # Read the requirements file
           REQUIREMENTS=$(cat docs/REQUIREMENTS.md)
@@ -60,7 +60,7 @@ jobs:
 
       - name: Add Issues to Detected or Created Project
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.PAT_FOR_ACTIONS }} # Use the PAT_FOR_ACTIONS secret
         run: |
           # Add all created issues to the detected or newly created project
           gh issue list --json number -q '.[].number' | while read -r ISSUE_NUMBER; do
