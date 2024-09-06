@@ -15,18 +15,15 @@ jobs:
 
       - name: Authenticate GitHub CLI
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT_FOR_ACTIONS }} # Use the PAT_FOR_ACTIONS secret
-        run: |
-          # Unset GITHUB_TOKEN to prevent conflicts
-          unset GITHUB_TOKEN
-          # Authenticate with GitHub CLI using the PAT_FOR_ACTIONS secret
-          echo "${{ secrets.PAT_FOR_ACTIONS }}" | gh auth login --with-token
+          MY_PAT: ${{ secrets.PAT_FOR_ACTIONS }} # Use a custom environment variable for the PAT
+        run: echo "${MY_PAT}" | gh auth login --with-token
 
       - name: Detect or Create Project
-        id: project
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT_FOR_ACTIONS }} # Use the PAT_FOR_ACTIONS secret
+          MY_PAT: ${{ secrets.PAT_FOR_ACTIONS }} # Use the custom environment variable
         run: |
+          # Authenticate again in case of new shells
+          echo "${MY_PAT}" | gh auth login --with-token
           # Attempt to detect the first project associated with this repository
           PROJECT_ID=$(gh project list --repo $GITHUB_REPOSITORY --json id,name --jq '.[0].id')
           
@@ -45,8 +42,10 @@ jobs:
 
       - name: Extract Requirements and Create Issues
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT_FOR_ACTIONS }} # Use the PAT_FOR_ACTIONS secret
+          MY_PAT: ${{ secrets.PAT_FOR_ACTIONS }} # Use the custom environment variable
         run: |
+          # Authenticate again in case of new shells
+          echo "${MY_PAT}" | gh auth login --with-token
           # Read the requirements file
           REQUIREMENTS=$(cat docs/REQUIREMENTS.md)
 
@@ -64,8 +63,10 @@ jobs:
 
       - name: Add Issues to Detected or Created Project
         env:
-          GITHUB_TOKEN: ${{ secrets.PAT_FOR_ACTIONS }} # Use the PAT_FOR_ACTIONS secret
+          MY_PAT: ${{ secrets.PAT_FOR_ACTIONS }} # Use the custom environment variable
         run: |
+          # Authenticate again in case of new shells
+          echo "${MY_PAT}" | gh auth login --with-token
           # Add all created issues to the detected or newly created project
           gh issue list --json number -q '.[].number' | while read -r ISSUE_NUMBER; do
             gh project item add ${{ env.project_id }} --content-id $(gh issue view $ISSUE_NUMBER --json id -q .id)
