@@ -1,0 +1,192 @@
+name: Engineering baseline integration validation
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  security-events: read
+
+concurrency:
+  group: engineering-baseline-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RELEASE_SHA256: 63bf2261c5b9c7075ba2007ae58bdc95376e01b99683ac4efec0611524bd20be
+
+jobs:
+  generic-release:
+    name: Generic release / Python 3.14
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout harness branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python 3.14
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Reconstruct and verify released template ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .integration/template/part-*.b64 > "$RUNNER_TEMP/github-template.b64"
+          base64 --decode "$RUNNER_TEMP/github-template.b64" > "$RUNNER_TEMP/github-template-v0.1.0.zip"
+          echo "$RELEASE_SHA256  $RUNNER_TEMP/github-template-v0.1.0.zip" | sha256sum --check --strict
+          unzip -q "$RUNNER_TEMP/github-template-v0.1.0.zip" -d "$RUNNER_TEMP/release"
+          echo "TEMPLATE_ROOT=$RUNNER_TEMP/release/github-template-v0.1.0" >> "$GITHUB_ENV"
+      - name: Validate generic baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$TEMPLATE_ROOT"
+          python --version
+          python scripts/baseline.py doctor
+          python .github/skills/code-review/scripts/validate_skill.py .github/skills/code-review
+          python .github/skills/code-review/scripts/validate_review_output.py --help >/dev/null
+
+  python-profile:
+    name: Python profile / Poetry / Ruff / Mypy / Pytest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout harness branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python 3.14
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Reconstruct and verify released template ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .integration/template/part-*.b64 > "$RUNNER_TEMP/github-template.b64"
+          base64 --decode "$RUNNER_TEMP/github-template.b64" > "$RUNNER_TEMP/github-template-v0.1.0.zip"
+          echo "$RELEASE_SHA256  $RUNNER_TEMP/github-template-v0.1.0.zip" | sha256sum --check --strict
+          unzip -q "$RUNNER_TEMP/github-template-v0.1.0.zip" -d "$RUNNER_TEMP/release"
+          cp -a "$RUNNER_TEMP/release/github-template-v0.1.0" "$RUNNER_TEMP/python-demo"
+          echo "PROFILE_ROOT=$RUNNER_TEMP/python-demo" >> "$GITHUB_ENV"
+      - name: Bootstrap Python profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROFILE_ROOT"
+          python scripts/baseline.py bootstrap \
+            --profile python \
+            --name baseline-python-ci \
+            --description "Engineering baseline Python 3.14 integration fixture" \
+            --owner kpeacocke \
+            --owner-name "Kristian Peacocke" \
+            --codeowner kpeacocke
+          python scripts/baseline.py doctor
+      - name: Install Poetry 2.4.2
+        run: pipx install poetry==2.4.2
+      - name: Install project dependencies
+        working-directory: ${{ env.PROFILE_ROOT }}
+        run: poetry install
+      - name: Poetry metadata
+        working-directory: ${{ env.PROFILE_ROOT }}
+        run: poetry check
+      - name: Ruff lint
+        working-directory: ${{ env.PROFILE_ROOT }}
+        run: poetry run ruff check .
+      - name: Ruff format
+        working-directory: ${{ env.PROFILE_ROOT }}
+        run: poetry run ruff format --check .
+      - name: Mypy
+        working-directory: ${{ env.PROFILE_ROOT }}
+        run: poetry run mypy
+      - name: Pytest with coverage gate
+        working-directory: ${{ env.PROFILE_ROOT }}
+        run: poetry run pytest
+
+  ansible-profile:
+    name: Ansible profile / ansible-lint / collection build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout harness branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python 3.14
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Reconstruct and verify released template ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .integration/template/part-*.b64 > "$RUNNER_TEMP/github-template.b64"
+          base64 --decode "$RUNNER_TEMP/github-template.b64" > "$RUNNER_TEMP/github-template-v0.1.0.zip"
+          echo "$RELEASE_SHA256  $RUNNER_TEMP/github-template-v0.1.0.zip" | sha256sum --check --strict
+          unzip -q "$RUNNER_TEMP/github-template-v0.1.0.zip" -d "$RUNNER_TEMP/release"
+          cp -a "$RUNNER_TEMP/release/github-template-v0.1.0" "$RUNNER_TEMP/ansible-demo"
+          echo "PROFILE_ROOT=$RUNNER_TEMP/ansible-demo" >> "$GITHUB_ENV"
+      - name: Bootstrap Ansible profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$PROFILE_ROOT"
+          python scripts/baseline.py bootstrap \
+            --profile ansible \
+            --name baseline-ansible-ci \
+            --description "Engineering baseline Ansible integration fixture" \
+            --owner kpeacocke \
+            --owner-name "Kristian Peacocke" \
+            --codeowner kpeacocke \
+            --ansible-namespace kpeacocke \
+            --ansible-collection baseline_ci
+          python scripts/baseline.py doctor
+      - name: Install Ansible tooling
+        working-directory: ${{ env.PROFILE_ROOT }}
+        run: python -m pip install -r requirements-dev.txt
+      - name: ansible-lint
+        working-directory: ${{ env.PROFILE_ROOT }}
+        run: ansible-lint
+      - name: Build collection
+        working-directory: ${{ env.PROFILE_ROOT }}
+        run: ansible-galaxy collection build --force
+
+  github-live-audit:
+    name: Live GitHub reconciliation audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout harness branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python 3.14
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Reconstruct and verify released template ZIP
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .integration/template/part-*.b64 > "$RUNNER_TEMP/github-template.b64"
+          base64 --decode "$RUNNER_TEMP/github-template.b64" > "$RUNNER_TEMP/github-template-v0.1.0.zip"
+          echo "$RELEASE_SHA256  $RUNNER_TEMP/github-template-v0.1.0.zip" | sha256sum --check --strict
+          unzip -q "$RUNNER_TEMP/github-template-v0.1.0.zip" -d "$RUNNER_TEMP/release"
+          echo "TEMPLATE_ROOT=$RUNNER_TEMP/release/github-template-v0.1.0" >> "$GITHUB_ENV"
+      - name: Prove gh authentication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh --version
+          gh auth status
+          gh repo view "$GITHUB_REPOSITORY" --json nameWithOwner,defaultBranchRef
+      - name: Run live repository audit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          cd "$TEMPLATE_ROOT"
+          set +e
+          python scripts/github_reconcile.py --repo "$GITHUB_REPOSITORY" 2>&1 | tee "$RUNNER_TEMP/github-reconcile.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          cat "$RUNNER_TEMP/github-reconcile.log"
+          grep -q "GitHub repository baseline" "$RUNNER_TEMP/github-reconcile.log"
+          if [[ "$rc" -eq 2 ]]; then
+            echo "Reconciliation was blocked before a live audit could run" >&2
+            exit 2
+          fi
+          echo "Live audit completed with exit code $rc (0=compliant, 1=drift/blocked controls)."
