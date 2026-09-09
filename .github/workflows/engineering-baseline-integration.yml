@@ -16,6 +16,7 @@ concurrency:
 
 env:
   RELEASE_TREE_SHA256: 0fe28e8dfd085465b1fee48d0158dded182a02d293f8ef45ba8f491a0a23437d
+  REPAIR_SHA256: 7752b806a3e0a16b53b54ce594a3b6b3ac8921a507b0c3bd1da2b1092e452d24
 
 jobs:
   generic:
@@ -46,6 +47,9 @@ jobs:
           cp "$TEMPLATE_ROOT/scripts/baseline.py" "$TEMPLATE_ROOT/.baseline/catalog/common/scripts/baseline.py"
           decode github_reconcile "$TEMPLATE_ROOT/scripts/github_reconcile.py"
           cp "$TEMPLATE_ROOT/scripts/github_reconcile.py" "$TEMPLATE_ROOT/.baseline/catalog/common/scripts/github_reconcile.py"
+          cat .integration/fragments/repair/*.b64 | base64 --decode > "$RUNNER_TEMP/repair.tar.xz"
+          echo "$REPAIR_SHA256  $RUNNER_TEMP/repair.tar.xz" | sha256sum --check --strict
+          tar -xJf "$RUNNER_TEMP/repair.tar.xz" -C "$TEMPLATE_ROOT"
           decode release_sha256 "$RUNNER_TEMP/release-sha256.txt"
           echo "$RELEASE_TREE_SHA256  $RUNNER_TEMP/release-sha256.txt" | sha256sum --check --strict
           (
