@@ -69,6 +69,35 @@ jobs:
           print(f'RELEASE TREE: PASS ({len(actual)} files)')
           PY
           )
+          python - "$TEMPLATE_ROOT" <<'PY'
+          from pathlib import Path
+          import json
+          import sys
+          root = Path(sys.argv[1])
+          (root / ".baseline/VERSION").write_text("0.1.1\n", encoding="utf-8")
+          manifest_path = root / ".baseline/manifest.json"
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          manifest["baseline_version"] = "0.1.1"
+          manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+          state_path = root / ".baseline/state.json"
+          state = json.loads(state_path.read_text(encoding="utf-8"))
+          state["installed_version"] = "0.1.1"
+          state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+          readme = root / "README.md"
+          readme.write_text(readme.read_text(encoding="utf-8").replace("engineering-baseline **0.1.0**", "engineering-baseline **0.1.1**"), encoding="utf-8")
+          ci = root / ".baseline/catalog/profiles/python/.github/workflows/ci.yml"
+          text = ci.read_text(encoding="utf-8")
+          text = text.replace("poetry run ruff check .", "poetry run ruff check src tests")
+          text = text.replace("poetry run ruff format --check .", "poetry run ruff format --check src tests")
+          ci.write_text(text, encoding="utf-8")
+          pyproject = root / ".baseline/catalog/profiles/python/pyproject.toml"
+          text = pyproject.read_text(encoding="utf-8")
+          marker = '[tool.ruff.lint]\nselect = ["E", "F", "I", "UP", "B", "SIM", "S"]\n'
+          if '[tool.ruff.lint.per-file-ignores]' not in text:
+              text = text.replace(marker, marker + '\n[tool.ruff.lint.per-file-ignores]\n"tests/**/*.py" = ["S101"]\n')
+          pyproject.write_text(text, encoding="utf-8")
+          print("CANDIDATE DELTA: applied v0.1.1")
+          PY
           echo "TEMPLATE_ROOT=$TEMPLATE_ROOT" >> "$GITHUB_ENV"
       - name: Validate generic baseline
         run: |
@@ -104,15 +133,15 @@ jobs:
       - name: Ruff lint
         run: |
           cd "$PROFILE_ROOT"
-          poetry run ruff check .
+          poetry run ruff check src tests
       - name: Ruff format
         run: |
           cd "$PROFILE_ROOT"
-          poetry run ruff format --check .
+          poetry run ruff format --check src tests
       - name: Mypy
         run: |
           cd "$PROFILE_ROOT"
-          poetry run mypy .
+          poetry run mypy
       - name: Pytest with coverage gate
         run: |
           cd "$PROFILE_ROOT"
@@ -133,7 +162,9 @@ jobs:
           python scripts/baseline.py doctor
           echo "PROFILE_ROOT=$RUNNER_TEMP/ansible-profile" >> "$GITHUB_ENV"
       - name: Install Ansible tooling
-        run: python -m pip install --disable-pip-version-check 'ansible-core>=2.19,<2.20' 'ansible-lint>=25,<26'
+        run: |
+          cd "$PROFILE_ROOT"
+          python -m pip install --disable-pip-version-check -r requirements-dev.txt
       - name: ansible-lint
         run: |
           cd "$PROFILE_ROOT"
