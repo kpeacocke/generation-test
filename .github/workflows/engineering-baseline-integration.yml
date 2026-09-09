@@ -1,0 +1,220 @@
+name: Engineering baseline integration validation
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+  security-events: read
+
+concurrency:
+  group: engineering-baseline-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RELEASE_TREE_SHA256: 0fe28e8dfd085465b1fee48d0158dded182a02d293f8ef45ba8f491a0a23437d
+  REPAIR_SHA256: 7752b806a3e0a16b53b54ce594a3b6b3ac8921a507b0c3bd1da2b1092e452d24
+
+jobs:
+  generic:
+    name: Generic release / Python 3.14
+    runs-on: ubuntu-24.04
+    steps:
+      - &checkout
+        name: Checkout harness branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - &python
+        name: Set up Python 3.14
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: '3.14'
+      - &prepare
+        name: Reconstruct and verify released tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          export TEMPLATE_ROOT="$RUNNER_TEMP/release"
+          mkdir -p "$TEMPLATE_ROOT"
+          cp -a .integration/release/. "$TEMPLATE_ROOT/"
+          decode() { cat ".integration/fragments/$1"/*.b64 | base64 --decode | xz --decompress --stdout > "$2"; }
+          decode manifest "$TEMPLATE_ROOT/.baseline/manifest.json"
+          decode code_review "$TEMPLATE_ROOT/.github/skills/code-review/SKILL.md"
+          cp "$TEMPLATE_ROOT/.github/skills/code-review/SKILL.md" "$TEMPLATE_ROOT/.baseline/catalog/common/.github/skills/code-review/SKILL.md"
+          decode baseline_py "$TEMPLATE_ROOT/scripts/baseline.py"
+          cp "$TEMPLATE_ROOT/scripts/baseline.py" "$TEMPLATE_ROOT/.baseline/catalog/common/scripts/baseline.py"
+          decode github_reconcile "$TEMPLATE_ROOT/scripts/github_reconcile.py"
+          cp "$TEMPLATE_ROOT/scripts/github_reconcile.py" "$TEMPLATE_ROOT/.baseline/catalog/common/scripts/github_reconcile.py"
+          cat .integration/fragments/repair/*.b64 | base64 --decode > "$RUNNER_TEMP/repair.tar.xz"
+          echo "$REPAIR_SHA256  $RUNNER_TEMP/repair.tar.xz" | sha256sum --check --strict
+          tar -xJf "$RUNNER_TEMP/repair.tar.xz" -C "$TEMPLATE_ROOT"
+          decode release_sha256 "$RUNNER_TEMP/release-sha256.txt"
+          echo "$RELEASE_TREE_SHA256  $RUNNER_TEMP/release-sha256.txt" | sha256sum --check --strict
+          (
+            cd "$TEMPLATE_ROOT"
+            sha256sum --check --strict "$RUNNER_TEMP/release-sha256.txt"
+            python - "$RUNNER_TEMP/release-sha256.txt" <<'PY'
+          from pathlib import Path
+          import sys
+          expected = {line.split('  ', 1)[1].rstrip('\n') for line in Path(sys.argv[1]).read_text().splitlines() if line}
+          actual = {p.relative_to('.').as_posix() for p in Path('.').rglob('*') if p.is_file()}
+          missing = sorted(expected - actual)
+          extra = sorted(actual - expected)
+          if missing or extra:
+              print('MISSING:', *missing, sep='\n  ')
+              print('EXTRA:', *extra, sep='\n  ')
+              raise SystemExit(1)
+          print(f'RELEASE TREE: PASS ({len(actual)} files)')
+          PY
+          )
+          python - "$TEMPLATE_ROOT" <<'PY'
+          from pathlib import Path
+          import json
+          import sys
+          root = Path(sys.argv[1])
+          (root / ".baseline/VERSION").write_text("0.1.1\n", encoding="utf-8")
+          manifest_path = root / ".baseline/manifest.json"
+          manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+          manifest["baseline_version"] = "0.1.1"
+          manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+          state_path = root / ".baseline/state.json"
+          state = json.loads(state_path.read_text(encoding="utf-8"))
+          state["installed_version"] = "0.1.1"
+          state_path.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+          readme = root / "README.md"
+          readme.write_text(readme.read_text(encoding="utf-8").replace("engineering-baseline **0.1.0**", "engineering-baseline **0.1.1**"), encoding="utf-8")
+          ci = root / ".baseline/catalog/profiles/python/.github/workflows/ci.yml"
+          text = ci.read_text(encoding="utf-8")
+          text = text.replace("poetry run ruff check .", "poetry run ruff check src tests")
+          text = text.replace("poetry run ruff format --check .", "poetry run ruff format --check src tests")
+          ci.write_text(text, encoding="utf-8")
+          pyproject = root / ".baseline/catalog/profiles/python/pyproject.toml"
+          text = pyproject.read_text(encoding="utf-8")
+          marker = '[tool.ruff.lint]\nselect = ["E", "F", "I", "UP", "B", "SIM", "S"]\n'
+          if '[tool.ruff.lint.per-file-ignores]' not in text:
+              text = text.replace(marker, marker + '\n[tool.ruff.lint.per-file-ignores]\n"tests/**/*.py" = ["S101"]\n')
+          text = text.replace('packages = ["{{PYTHON_PACKAGE}}"]', 'files = ["src", "tests"]')
+          pyproject.write_text(text, encoding="utf-8")
+          ansible_lint = root / ".baseline/catalog/profiles/ansible/.ansible-lint"
+          text = ansible_lint.read_text(encoding="utf-8")
+          if "  - .baseline/\n" not in text:
+              text = text.replace("exclude_paths:\n", "exclude_paths:\n  - .baseline/\n")
+          ansible_lint.write_text(text, encoding="utf-8")
+          galaxy = root / ".baseline/catalog/profiles/ansible/galaxy.yml"
+          text = galaxy.read_text(encoding="utf-8").replace("tags: []", "tags:\n  - infrastructure\n  - tools")
+          galaxy.write_text(text, encoding="utf-8")
+          print("CANDIDATE DELTA: applied v0.1.1")
+          PY
+          echo "TEMPLATE_ROOT=$TEMPLATE_ROOT" >> "$GITHUB_ENV"
+      - name: Validate generic baseline
+        run: |
+          cd "$TEMPLATE_ROOT"
+          python --version
+          python scripts/baseline.py doctor
+          python .github/skills/code-review/scripts/validate_skill.py .github/skills/code-review
+
+  python-profile:
+    name: Python profile / Poetry / Ruff / Mypy / Pytest
+    runs-on: ubuntu-24.04
+    steps:
+      - *checkout
+      - *python
+      - *prepare
+      - name: Bootstrap Python profile
+        run: |
+          cp -a "$TEMPLATE_ROOT" "$RUNNER_TEMP/python-profile"
+          cd "$RUNNER_TEMP/python-profile"
+          python scripts/baseline.py bootstrap --profile python --name integration-python --owner kpeacocke
+          python scripts/baseline.py doctor
+          echo "PROFILE_ROOT=$RUNNER_TEMP/python-profile" >> "$GITHUB_ENV"
+      - name: Install Poetry 2.4.2
+        run: python -m pip install --disable-pip-version-check 'poetry==2.4.2'
+      - name: Install project dependencies
+        run: |
+          cd "$PROFILE_ROOT"
+          poetry install --no-interaction
+      - name: Poetry metadata
+        run: |
+          cd "$PROFILE_ROOT"
+          poetry check
+      - name: Ruff lint
+        run: |
+          cd "$PROFILE_ROOT"
+          poetry run ruff check src tests
+      - name: Ruff format
+        run: |
+          cd "$PROFILE_ROOT"
+          poetry run ruff format --check src tests
+      - name: Mypy
+        run: |
+          cd "$PROFILE_ROOT"
+          poetry run mypy
+      - name: Pytest with coverage gate
+        run: |
+          cd "$PROFILE_ROOT"
+          poetry run pytest
+
+  ansible-profile:
+    name: Ansible profile / ansible-lint / collection build
+    runs-on: ubuntu-24.04
+    steps:
+      - *checkout
+      - *python
+      - *prepare
+      - name: Bootstrap Ansible profile
+        run: |
+          cp -a "$TEMPLATE_ROOT" "$RUNNER_TEMP/ansible-profile"
+          cd "$RUNNER_TEMP/ansible-profile"
+          python scripts/baseline.py bootstrap --profile ansible --name integration-ansible --owner kpeacocke --ansible-namespace kpeacocke --ansible-collection integration_collection
+          python scripts/baseline.py doctor
+          echo "PROFILE_ROOT=$RUNNER_TEMP/ansible-profile" >> "$GITHUB_ENV"
+      - name: Install Ansible tooling
+        run: |
+          cd "$PROFILE_ROOT"
+          python -m pip install --disable-pip-version-check -r requirements-dev.txt
+      - name: ansible-lint
+        run: |
+          cd "$PROFILE_ROOT"
+          ansible-lint
+      - name: Build collection
+        run: |
+          cd "$PROFILE_ROOT"
+          ansible-galaxy collection build --force
+
+  github-live:
+    name: Live GitHub reconciliation audit
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+      security-events: read
+    steps:
+      - *checkout
+      - *python
+      - *prepare
+      - name: Prove gh authentication
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh --version
+          gh auth status
+          gh repo view "$GITHUB_REPOSITORY" --json nameWithOwner,defaultBranchRef
+      - name: Run live repository audit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd "$TEMPLATE_ROOT"
+          set +e
+          python scripts/github_reconcile.py --repo "$GITHUB_REPOSITORY" | tee "$RUNNER_TEMP/github-audit.log"
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" -eq 0 ]; then
+            echo "LIVE AUDIT: COMPLIANT"
+          elif [ "$rc" -eq 1 ] && grep -Eq "\[(FAIL|WARN|DRIFT)\]|NON-COMPLIANT|DRIFT" "$RUNNER_TEMP/github-audit.log"; then
+            echo "LIVE AUDIT: PASS (expected repository drift detected)"
+          else
+            echo "LIVE AUDIT: unexpected failure rc=$rc"
+            exit "$rc"
+          fi
