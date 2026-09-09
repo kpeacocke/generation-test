@@ -95,7 +95,16 @@ jobs:
           marker = '[tool.ruff.lint]\nselect = ["E", "F", "I", "UP", "B", "SIM", "S"]\n'
           if '[tool.ruff.lint.per-file-ignores]' not in text:
               text = text.replace(marker, marker + '\n[tool.ruff.lint.per-file-ignores]\n"tests/**/*.py" = ["S101"]\n')
+          text = text.replace('packages = ["{{PYTHON_PACKAGE}}"]', 'files = ["src", "tests"]')
           pyproject.write_text(text, encoding="utf-8")
+          ansible_lint = root / ".baseline/catalog/profiles/ansible/.ansible-lint"
+          text = ansible_lint.read_text(encoding="utf-8")
+          if "  - .baseline/\n" not in text:
+              text = text.replace("exclude_paths:\n", "exclude_paths:\n  - .baseline/\n")
+          ansible_lint.write_text(text, encoding="utf-8")
+          galaxy = root / ".baseline/catalog/profiles/ansible/galaxy.yml"
+          text = galaxy.read_text(encoding="utf-8").replace("tags: []", "tags:\n  - infrastructure\n  - tools")
+          galaxy.write_text(text, encoding="utf-8")
           print("CANDIDATE DELTA: applied v0.1.1")
           PY
           echo "TEMPLATE_ROOT=$TEMPLATE_ROOT" >> "$GITHUB_ENV"
